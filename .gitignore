@@ -1,3 +1,7 @@
+# Documentation (Privée)
+CONTEXT_BACK.md
+docs/IMPLEMENTATION.md
+
 # Python
 __pycache__/
 *.py[cod]
