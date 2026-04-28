@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv
+venv/
+env/
+
+# Environnement (CRITIQUE : Ne jamais pousser le .env)
+.env
+.env.local
+
+# Bases de données
+chroma_db/
+*.db
+*.sqlite3
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+.docker/
+
+# Données (On ignore le contenu mais on garde la structure)
+data/raw/**/*
+data/processed/**/*
+!data/**/.gitkeep
