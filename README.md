@@ -27,7 +27,7 @@ SamaVoie est une plateforme intelligente d'orientation académique dédiée aux 
 | Couche | Technologie |
 |:---|:---|
 | Framework Web | FastAPI 0.128 (async) |
-| LLM (Kali AI) | Gemma 4 / Mistral / GPT-4o |
+| LLM (Kali AI) | Gemma 4 |
 | Embeddings | BAAI/BGE-M3 (local, symétrie indexation/retrieval) |
 | Orchestration RAG | LangChain 1.2 |
 | Base vectorielle | ChromaDB 1.5 |
@@ -130,15 +130,3 @@ Après chaque modification d'un modèle ORM :
 alembic revision --autogenerate -m "description"
 alembic upgrade head
 ```
-
-## Avancement
-
-| Phase | Statut |
-|:---|:---|
-| Phase 1 — Initialisation + Audit | Terminé |
-| Phase 2 — Modèles & Schémas | Terminé |
-| Phase 3 — Sécurité & Auth | En cours |
-| Phase 4 — Ingestion de données | À faire |
-| Phase 5 — Routers API | À faire |
-| Phase 6 — Moteur RAG | À faire |
-| Phase 7 — Containerisation | À faire |
