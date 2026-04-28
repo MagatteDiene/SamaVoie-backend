@@ -1,24 +1,37 @@
-fastapi[all]==0.110.0
-uvicorn==0.27.1
-pydantic[email]==2.6.3
-pydantic-settings==2.2.1
-python-dotenv==1.0.1
+# ============================================================
+# SamaVoie Backend — Dépendances
+# Python 3.11 requis (3.14 incompatible avec ChromaDB/pydantic.v1)
+# Environnement : .venv/ (créer via : python3.11 -m venv .venv)
+# Installation : .venv/Scripts/pip install -r requirements.txt
+# ============================================================
 
-# RAG & IA
-langchain==0.1.11
-langchain-community==0.0.27
-langchain-huggingface==0.0.1
-chromadb==0.4.24
-sentence-transformers==2.5.1
-google-generativeai==0.4.1
+# --- API & Serveur ---
+fastapi[all]==0.128.0
+uvicorn[standard]==0.40.0
+python-multipart==0.0.27
+httpx==0.28.1
 
-# Database & Auth
-sqlalchemy==2.0.28
-psycopg2-binary==2.9.9
-asyncpg==0.29.0
-python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
+# --- Validation & Configuration ---
+pydantic[email]==2.12.5
+pydantic-settings==2.14.0
+python-dotenv==1.2.2
 
-# Utilities
-python-multipart==0.0.9
-httpx==0.27.0
+# --- RAG & IA ---
+langchain==1.2.15
+langchain-community==0.4.1
+langchain-huggingface==1.2.2
+langchain-text-splitters==1.1.2          # Chunking (512 tokens, overlap 50)
+chromadb==1.5.8
+sentence-transformers==5.4.1             # BGE-M3 local (symétrie indexation/retrieval)
+# ATTENTION : google-generativeai est déprécié — migrer vers google-genai (Phase 3)
+google-generativeai==0.8.6               # Gemini 1.5 Pro — extraction PDF
+
+# --- Base de données & Migrations ---
+sqlalchemy==2.0.49
+asyncpg==0.31.0                          # Driver async PostgreSQL (runtime)
+psycopg2-binary==2.9.12                  # Driver sync (Alembic offline mode)
+alembic==1.18.4                          # Migrations de schéma
+
+# --- Auth & Sécurité ---
+python-jose[cryptography]==3.5.0         # JWT tokens
+passlib[bcrypt]==1.7.4                   # Hachage des mots de passe

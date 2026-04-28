@@ -33,6 +33,19 @@ Thumbs.db
 # Docker
 .docker/
 
+# Build / dist
+dist/
+build/
+*.egg-info/
+
+# Logs
+*.log
+logs/
+
+# Tests coverage
+.coverage
+htmlcov/
+
 # Données (On ignore le contenu mais on garde la structure)
 data/raw/**/*
 data/processed/**/*
