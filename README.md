@@ -58,11 +58,6 @@ SamaVoie repose sur une stack technique de pointe pour garantir performance et p
    uvicorn app.main:app --reload
    ```
 
-## Documentation
-
-- [Guide d'Implémentation Technique](docs/IMPLEMENTATION.md) - Détails sur l'architecture et la roadmap.
-- [Contexte Projet](docs/CONTEXT_BACK.md) - Vision globale et objectifs.
-
 ## Kali AI
 
 Kali AI utilise une approche hybride pour l'orientation :
