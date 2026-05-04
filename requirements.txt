@@ -17,6 +17,14 @@ pydantic-settings==2.14.0
 python-dotenv==1.2.2
 
 # --- RAG & IA ---
+# --- PyTorch CUDA 12.4 (GTX 1650 Ti — compute 7.5) ---
+# cu121 limité à torch 2.5.1 → incompatible avec transformers (exige torch>=2.6, CVE-2025-32434)
+# Installation séparée obligatoire (index-url spécial) :
+#   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+torch==2.6.0+cu124
+torchvision==0.21.0+cu124
+torchaudio==2.6.0+cu124
+
 langchain==1.2.15
 langchain-community==0.4.1
 langchain-huggingface==1.2.2
@@ -35,3 +43,4 @@ alembic==1.18.4                          # Migrations de schéma
 # --- Auth & Sécurité ---
 python-jose[cryptography]==3.5.0         # JWT tokens
 passlib[bcrypt]==1.7.4                   # Hachage des mots de passe
+bcrypt==4.0.1                            # passlib 1.7.4 incompatible avec bcrypt>=4.1

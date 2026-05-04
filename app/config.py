@@ -23,7 +23,8 @@ class Settings(BaseSettings):
 
     # RAG
     BGE_MODEL_NAME: str = Field("BAAI/bge-m3", description="Modèle local pour les embeddings")
-    LLM_PROVIDER: str = Field("gemini", description="gemini | openai | mistral")
+    LLM_PROVIDER: str = Field("gemma", description="gemma | gemini | openai | mistral")
+    GEMMA_MODEL_NAME: str = Field("gemma-4", description="Variante Gemma 4 (ex: gemma-4, gemma-4-27b-it)")
     RAG_TOP_K: int = Field(5, description="Nombre de chunks récupérés par ChromaDB")
 
     # CORS — liste d'origines autorisées (séparées par des virgules dans .env)
@@ -40,7 +41,7 @@ class Settings(BaseSettings):
     @field_validator("LLM_PROVIDER")
     @classmethod
     def validate_llm_provider(cls, v: str) -> str:
-        allowed = {"gemini", "openai", "mistral", "llama"}
+        allowed = {"gemma", "gemini", "openai", "mistral", "llama"}
         if v not in allowed:
             raise ValueError(f"LLM_PROVIDER doit être l'un de {allowed}")
         return v

@@ -10,7 +10,7 @@ from fastapi.exceptions import RequestValidationError
 from app.config import settings
 
 # ---------------------------------------------------------------------------
-# Logging structuré — à configurer avant tout import applicatif
+# Logging structuré — initialisé avant tout import applicatif
 # ---------------------------------------------------------------------------
 LOGGING_CONFIG = {
     "version": 1,
@@ -22,10 +22,7 @@ LOGGING_CONFIG = {
         },
     },
     "handlers": {
-        "console": {
-            "class": "logging.StreamHandler",
-            "formatter": "default",
-        },
+        "console": {"class": "logging.StreamHandler", "formatter": "default"},
     },
     "root": {
         "handlers": ["console"],
@@ -34,44 +31,47 @@ LOGGING_CONFIG = {
     "loggers": {
         "uvicorn": {"propagate": True},
         "sqlalchemy.engine": {"level": "WARNING", "propagate": True},
+        # Silence les loggers verbeux de torch/transformers en prod
+        "transformers": {"level": "WARNING", "propagate": True},
+        "sentence_transformers": {"level": "WARNING", "propagate": True},
     },
 }
 
 logging.config.dictConfig(LOGGING_CONFIG)
 logger = logging.getLogger("samavoie")
 
+
 # ---------------------------------------------------------------------------
-# Lifespan — chargement unique des ressources coûteuses
+# Lifespan — chargement / libération des ressources coûteuses
 # ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Démarrage SamaVoie Backend v%s", settings.VERSION)
 
-    # Pré-chargement BGE-M3 : évite une latence de 30–60s sur la première requête
-    # Stocké dans app.state pour être partagé entre les handlers
-    try:
-        from sentence_transformers import SentenceTransformer
-        logger.info("Chargement du modèle BGE-M3 (%s)...", settings.BGE_MODEL_NAME)
-        app.state.embedding_model = SentenceTransformer(
-            settings.BGE_MODEL_NAME, trust_remote_code=True
-        )
-        logger.info("BGE-M3 chargé avec succès.")
-    except Exception as exc:
-        logger.warning("BGE-M3 non disponible (mode dégradé) : %s", exc)
-        app.state.embedding_model = None
+    # --- BGE-M3 : délégué entièrement à core/embedding ---
+    # Le singleton gère la détection CUDA, le fallback CPU et le warm-up.
+    from app.core.embedding import load_embedding_model, get_device_info
+    model = load_embedding_model()
+    if model is None:
+        logger.warning("BGE-M3 non disponible — les endpoints RAG seront dégradés.")
+    else:
+        info = get_device_info()
+        logger.info("BGE-M3 actif : device=%s | %s", info["device"], info.get("gpu_name", ""))
 
-    # Vérification de la connexion ChromaDB
+    # --- ChromaDB : vérification de la connexion au démarrage ---
     try:
         from app.db.chroma import get_chroma_client
         get_chroma_client()
         logger.info("ChromaDB connecté : %s", settings.CHROMA_PERSIST_PATH)
     except Exception as exc:
-        logger.error("ChromaDB indisponible : %s", exc)
+        logger.error("ChromaDB indisponible au démarrage : %s", exc)
 
-    yield
+    yield  # l'application tourne
 
+    # --- Shutdown : libération explicite du GPU ---
+    from app.core.embedding import unload_embedding_model
+    unload_embedding_model()
     logger.info("Arrêt propre du serveur.")
-    app.state.embedding_model = None
 
 
 # ---------------------------------------------------------------------------
@@ -84,7 +84,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS — origines depuis la configuration (jamais * en production)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -93,12 +92,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 # ---------------------------------------------------------------------------
-# Handlers d'exceptions — format standard CONTEXT_BACK
+# Handlers d'exceptions — format standard {"success", "error", "message"}
 # ---------------------------------------------------------------------------
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    logger.warning("Erreur de validation : %s | path=%s", exc.errors(), request.url.path)
+    logger.warning("Validation error | path=%s | %s", request.url.path, exc.errors())
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content={
@@ -112,7 +112,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 @app.exception_handler(Exception)
 async def generic_exception_handler(request: Request, exc: Exception):
-    logger.exception("Erreur interne non gérée : %s | path=%s", exc, request.url.path)
+    logger.exception("Unhandled exception | path=%s | %s", request.url.path, exc)
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={
@@ -137,15 +137,27 @@ async def root():
 
 @app.get("/health", tags=["Health"])
 async def health_check():
-    return {"success": True, "data": {"status": "healthy"}, "message": "OK"}
+    """
+    Retourne l'état de santé du serveur, y compris les infos GPU/device de BGE-M3.
+    Utile pour vérifier que le modèle tourne bien sur CUDA en développement.
+    """
+    from app.core.embedding import get_device_info
+    return {
+        "success": True,
+        "data": {
+            "status": "healthy",
+            "embedding_model": get_device_info(),
+        },
+        "message": "OK",
+    }
 
 
 # ---------------------------------------------------------------------------
-# Routers — activés progressivement par phase
+# Routers — décommentés progressivement par phase
 # ---------------------------------------------------------------------------
 # Phase 3 — Auth
-# from app.api.auth import router as auth_router
-# app.include_router(auth_router, prefix="/auth", tags=["Authentication"])
+from app.api.auth import router as auth_router
+app.include_router(auth_router, prefix="/auth", tags=["Authentication"])
 
 # Phase 4 — Chat RAG
 # from app.api.chat import router as chat_router
