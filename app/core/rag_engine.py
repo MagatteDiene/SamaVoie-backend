@@ -10,22 +10,66 @@ logger = logging.getLogger("samavoie.core.rag_engine")
 
 _OLLAMA_BASE_URL = "http://localhost:11434"
 _OLLAMA_MODEL    = "qwen2.5:3b"
-_OLLAMA_TIMEOUT  = 120.0  # 3b model — beaucoup plus rapide
+_OLLAMA_TIMEOUT  = 120.0
 
-_SYSTEM_PROMPT = """\
+_SYSTEM_PROMPT_BASE = """\
 Tu es Kali, l'intelligence artificielle intégrée à la plateforme SamaVoie, spécialisée en orientation académique et professionnelle dans le système sénégalais.
 Tu réponds en français, de façon claire et structurée, en t'appuyant UNIQUEMENT sur les extraits de documents fournis.
 Si l'information n'est pas dans les extraits, dis-le honnêtement sans inventer.\
 """
 
+_HISTORY_LIMIT = 10  # 5 échanges = 10 messages
 
-async def query(question: str, top_k: int | None = None) -> tuple[str, list[str]]:
+
+def _build_system_prompt(user_context: dict | None) -> str:
+    """Construit le system prompt en injectant le profil utilisateur si disponible."""
+    if not user_context:
+        return _SYSTEM_PROMPT_BASE
+
+    lines = [_SYSTEM_PROMPT_BASE, ""]
+
+    prenom = user_context.get("prenom", "").strip()
+    if prenom:
+        lines.append(f"Tu parles à {prenom}.")
+
+    profile: dict = user_context.get("profile") or {}
+    niveau  = profile.get("niveau", "")
+    serie   = profile.get("serie", "")
+    interets: list = profile.get("interets", [])
+
+    if niveau or serie:
+        ctx = f"Niveau scolaire : {niveau}" if niveau else ""
+        if serie:
+            ctx = (ctx + f", Série : {serie}") if ctx else f"Série : {serie}"
+        lines.append(ctx)
+
+    if interets:
+        lines.append(f"Centres d'intérêt : {', '.join(interets)}.")
+
+    if prenom or niveau or interets:
+        lines.append("Adapte tes réponses à son profil.")
+
+    return "\n".join(lines)
+
+
+async def query(
+    question: str,
+    top_k: int | None = None,
+    history: list[dict] | None = None,
+    user_context: dict | None = None,
+) -> tuple[str, list[str]]:
     """
     Pipeline RAG complet :
       1. Encode la question avec BGE-M3
       2. Récupère les top_k chunks les plus proches dans ChromaDB
-      3. Envoie la question + contexte à Ollama (gemma4:e4b)
+      3. Envoie question + contexte + historique à Ollama
       4. Retourne (réponse, liste des sources)
+
+    Args:
+        history: derniers messages [{role, content}] — le RAG injecte le contexte
+                 uniquement dans le message courant, pas dans l'historique.
+        user_context: {prenom, nom, profile: {niveau, serie, interets}} pour
+                      personnaliser le system prompt.
     """
     k = top_k or settings.RAG_TOP_K
 
@@ -52,22 +96,25 @@ async def query(question: str, top_k: int | None = None) -> tuple[str, list[str]
 
     logger.debug("RAG : %d chunks récupérés depuis %s", len(chunks), sources)
 
-    # --- Étape 3 : génération avec Ollama ---
-    user_message = (
-        f"Extraits de documents :\n{context}\n\n"
-        f"Question : {question}"
-    )
+    # --- Étape 3 : construction des messages ---
+    system_prompt = _build_system_prompt(user_context)
+
+    # Message courant : la question enrichie du contexte RAG
+    current_user_message = f"Extraits de documents :\n{context}\n\nQuestion : {question}"
+
+    messages: list[dict] = [{"role": "system", "content": system_prompt}]
+
+    # Historique des échanges précédents (messages bruts, sans contexte RAG)
+    if history:
+        messages.extend(history[-_HISTORY_LIMIT:])
+
+    messages.append({"role": "user", "content": current_user_message})
 
     payload = {
         "model": _OLLAMA_MODEL,
-        "messages": [
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user",   "content": user_message},
-        ],
+        "messages": messages,
         "stream": False,
-        "options": {
-            "temperature": 0.3,
-        },
+        "options": {"temperature": 0.3},
     }
 
     async with httpx.AsyncClient(timeout=_OLLAMA_TIMEOUT) as client:
