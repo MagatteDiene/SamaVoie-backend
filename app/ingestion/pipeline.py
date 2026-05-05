@@ -8,7 +8,7 @@ from app.core.embedding import load_embedding_model
 from app.db.postgres import AsyncSessionLocal
 from app.ingestion.bge_indexer import index_chunks
 from app.ingestion.chunker import split_text
-from app.ingestion.gemini_extractor import extract_from_pdf
+from app.ingestion.ollama_extractor import extract_from_pdf
 from app.ingestion.pdf_utils import extract_text_from_pdf
 from app.models.etablissement import Etablissement
 from app.models.filiere import Filiere

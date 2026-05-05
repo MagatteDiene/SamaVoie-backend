@@ -10,7 +10,7 @@ from app.schemas.extraction import ExtractionResult
 logger = logging.getLogger("samavoie.ingestion.ollama_extractor")
 
 _OLLAMA_BASE_URL = "http://localhost:11434"
-_OLLAMA_MODEL    = "gemma4"
+_OLLAMA_MODEL    = "gemma4:e4b"
 _TIMEOUT         = 300.0  # 5 min — modèle local sur long PDF
 
 _SYSTEM_PROMPT = """\
@@ -57,8 +57,8 @@ async def extract_from_pdf(pdf_path: Path) -> ExtractionResult:
     """
     Extraction structurée d'un PDF via Ollama (modèle local gemma4).
 
-    Le texte est extrait par pdfplumber puis envoyé à Ollama via son API
-    compatible OpenAI (/v1/chat/completions). Aucun appel externe — zéro quota.
+    Le texte est extrait par pdfplumber puis envoyé à l'API native Ollama
+    (/api/chat). Aucun appel externe — zéro quota.
     """
     source = pdf_path.name
 
@@ -81,19 +81,24 @@ async def extract_from_pdf(pdf_path: Path) -> ExtractionResult:
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": f"Voici le contenu du document :\n\n{raw_text}"},
             ],
-            "response_format": {"type": "json_object"},
+            "format": "json",
             "stream": False,
-            "temperature": 0.1,
+            "options": {
+                "temperature": 0.1,
+                "num_gpu": 0,  # force CPU — BGE-M3 occupe déjà le GPU (4 GB VRAM)
+            },
         }
 
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             response = await client.post(
-                f"{_OLLAMA_BASE_URL}/v1/chat/completions",
+                f"{_OLLAMA_BASE_URL}/api/chat",
                 json=payload,
             )
+            if response.status_code != 200:
+                logger.error("Ollama HTTP %d — réponse brute : %s", response.status_code, response.text)
             response.raise_for_status()
 
-        content = response.json()["choices"][0]["message"]["content"]
+        content = response.json()["message"]["content"]
         data = json.loads(content)
         data["source"] = source
         data["chunks_texte"] = []  # rempli par le pipeline après chunking pdfplumber
