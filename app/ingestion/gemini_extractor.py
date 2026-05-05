@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -34,6 +35,43 @@ Les champs "etablissements" et "metiers" dans une filière sont des listes de no
 Si une information est absente, utilise null pour les scalaires et [] pour les listes."""
 
 
+_RETRY_DELAYS = [60, 120, 240]  # secondes — backoff exponentiel sur 429
+
+
+async def _generate_with_backoff(client: genai.Client, file_uri: str, source: str):
+    """
+    Appelle generateContent avec gemini-2.0-flash.
+    Réessaie automatiquement sur 429 RESOURCE_EXHAUSTED (quota free tier)
+    avec un backoff exponentiel : 60 s → 120 s → 240 s.
+    """
+    last_exc: Exception | None = None
+    for attempt, delay in enumerate([0] + _RETRY_DELAYS, start=1):
+        if delay:
+            logger.warning(
+                "429 RESOURCE_EXHAUSTED pour %s — attente %ds avant tentative %d/4…",
+                source, delay, attempt,
+            )
+            await asyncio.sleep(delay)
+        try:
+            return await client.aio.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=[
+                    types.Part.from_uri(file_uri=file_uri, mime_type="application/pdf"),
+                    _SYSTEM_PROMPT,
+                ],
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    temperature=0.1,
+                ),
+            )
+        except Exception as exc:
+            if "429" in str(exc) or "RESOURCE_EXHAUSTED" in str(exc):
+                last_exc = exc
+                continue
+            raise  # toute autre erreur remonte immédiatement
+    raise last_exc
+
+
 async def extract_from_pdf(pdf_path: Path) -> ExtractionResult:
     """
     Extraction structurée d'un PDF via Gemini Vision (Option B).
@@ -57,17 +95,7 @@ async def extract_from_pdf(pdf_path: Path) -> ExtractionResult:
         )
         logger.debug("Fichier uploadé : uri=%s", uploaded.uri)
 
-        response = await client.aio.models.generate_content(
-            model="gemini-1.5-flash",
-            contents=[
-                types.Part.from_uri(file_uri=uploaded.uri, mime_type="application/pdf"),
-                _SYSTEM_PROMPT,
-            ],
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                temperature=0.1,
-            ),
-        )
+        response = await _generate_with_backoff(client, uploaded.uri, source)
 
         data = json.loads(response.text)
         data["source"] = source
