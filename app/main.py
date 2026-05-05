@@ -163,13 +163,13 @@ app.include_router(auth_router, prefix="/auth", tags=["Authentication"])
 # from app.api.chat import router as chat_router
 # app.include_router(chat_router, prefix="/chat", tags=["Chat & RAG"])
 
-# Phase 5 — Référentiel
-# from app.api.filieres import router as filieres_router
-# from app.api.metiers import router as metiers_router
-# from app.api.etablissements import router as etablissements_router
-# app.include_router(filieres_router, prefix="/filieres", tags=["Filières"])
-# app.include_router(metiers_router, prefix="/metiers", tags=["Métiers"])
-# app.include_router(etablissements_router, prefix="/etablissements", tags=["Établissements"])
+# Phase 4 — Référentiel CRUD
+from app.api.filieres import router as filieres_router
+from app.api.metiers import router as metiers_router
+from app.api.etablissements import router as etablissements_router
+app.include_router(filieres_router, prefix="/filieres", tags=["Filières"])
+app.include_router(metiers_router, prefix="/metiers", tags=["Métiers"])
+app.include_router(etablissements_router, prefix="/etablissements", tags=["Établissements"])
 
 # Phase 5 — Historique & Admin
 # from app.api.history import router as history_router

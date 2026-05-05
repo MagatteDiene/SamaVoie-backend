@@ -31,8 +31,9 @@ langchain-huggingface==1.2.2
 langchain-text-splitters==1.1.2          # Chunking (512 tokens, overlap 50)
 chromadb==1.5.8
 sentence-transformers==5.4.1             # BGE-M3 local (symétrie indexation/retrieval)
-# ATTENTION : google-generativeai est déprécié — migrer vers google-genai (Phase 3)
-google-generativeai==0.8.6               # Gemini 1.5 Pro — extraction PDF
+google-genai>=0.8.0                      # SDK unifié Google GenAI — Gemini Vision (upload PDF natif)
+pdfplumber>=0.11.0                       # Extraction structurée PDF (tableaux + slide decks)
+pypdf>=4.0.0                             # Lecture PDF bas niveau (fallback / metadata)
 
 # --- Base de données & Migrations ---
 sqlalchemy==2.0.49
