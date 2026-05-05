@@ -11,7 +11,7 @@ logger = logging.getLogger("samavoie.ingestion.ollama_extractor")
 
 _OLLAMA_BASE_URL = "http://localhost:11434"
 _OLLAMA_MODEL    = "gemma4:e4b"
-_TIMEOUT         = 300.0  # 5 min — modèle local sur long PDF
+_TIMEOUT         = 1800.0  # 30 min — gemma4 sur CPU pur (~10-20 min par PDF)
 
 _SYSTEM_PROMPT = """\
 Tu es un expert en orientation académique et professionnelle sénégalaise.

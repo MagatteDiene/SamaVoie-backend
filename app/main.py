@@ -159,9 +159,9 @@ async def health_check():
 from app.api.auth import router as auth_router
 app.include_router(auth_router, prefix="/auth", tags=["Authentication"])
 
-# Phase 4 — Chat RAG
-# from app.api.chat import router as chat_router
-# app.include_router(chat_router, prefix="/chat", tags=["Chat & RAG"])
+# Phase 5 — Chat RAG
+from app.api.chat import router as chat_router
+app.include_router(chat_router, prefix="/chat", tags=["Chat & RAG"])
 
 # Phase 4 — Référentiel CRUD
 from app.api.filieres import router as filieres_router

@@ -8,7 +8,7 @@ from app.core.embedding import load_embedding_model
 from app.db.postgres import AsyncSessionLocal
 from app.ingestion.bge_indexer import index_chunks
 from app.ingestion.chunker import split_text
-from app.ingestion.ollama_extractor import extract_from_pdf
+# from app.ingestion.ollama_extractor import extract_from_pdf  # MVP : Flux A désactivé (trop lent)
 from app.ingestion.pdf_utils import extract_text_from_pdf
 from app.models.etablissement import Etablissement
 from app.models.filiere import Filiere
@@ -157,22 +157,20 @@ async def run_pipeline(pdf_path: Path) -> ExtractionResult:
     # BGE-M3 requis pour le Flux B — no-op si déjà chargé via lifespan FastAPI
     load_embedding_model()
 
-    # --- Flux A : Gemini Vision → données structurées PostgreSQL ---
-    extraction = await extract_from_pdf(pdf_path)
+    # --- Flux A : Extraction structurée → PostgreSQL (désactivé en mode MVP) ---
+    # extraction = await extract_from_pdf(pdf_path)
+    # db_counts = await _save_to_postgres(extraction)
+    extraction = ExtractionResult(source=pdf_path.name)
 
-    # --- Flux B : pdfplumber → chunking → ChromaDB ---
+    # --- Flux B : pdfplumber → chunking → BGE-M3 → ChromaDB ---
     raw_text = extract_text_from_pdf(pdf_path)
     chunks = split_text(raw_text)
-    extraction.chunks_texte = chunks  # chunks disponibles dans l'objet retourné
+    extraction.chunks_texte = chunks
 
     indexed = index_chunks(chunks, source=pdf_path.name)
 
-    # --- Sauvegarde PostgreSQL (après chunks pour que l'objet soit complet) ---
-    db_counts = await _save_to_postgres(extraction)
-
     logger.info(
-        "=== Pipeline terminé : source=%s | chunks=%d | filieres=%d | metiers=%d | etablissements=%d ===",
+        "=== Pipeline terminé : source=%s | chunks=%d ===",
         pdf_path.name, indexed,
-        db_counts["filieres"], db_counts["metiers"], db_counts["etablissements"],
     )
     return extraction
