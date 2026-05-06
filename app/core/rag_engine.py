@@ -22,20 +22,23 @@ _HISTORY_LIMIT = 10  # 5 échanges = 10 messages
 
 
 def _build_system_prompt(user_context: dict | None) -> str:
-    """Construit le system prompt en injectant le profil utilisateur si disponible."""
+    """Construit le system prompt en injectant le profil utilisateur si disponible.
+
+    user_context attendu (tous les champs optionnels) :
+        { prenom, nom, niveau, serie, interets: list[str] }
+    """
     if not user_context:
         return _SYSTEM_PROMPT_BASE
 
     lines = [_SYSTEM_PROMPT_BASE, ""]
 
-    prenom = user_context.get("prenom", "").strip()
+    prenom   = (user_context.get("prenom") or "").strip()
+    niveau   = (user_context.get("niveau") or "").strip()
+    serie    = (user_context.get("serie")  or "").strip()
+    interets: list = user_context.get("interets") or []
+
     if prenom:
         lines.append(f"Tu parles à {prenom}.")
-
-    profile: dict = user_context.get("profile") or {}
-    niveau  = profile.get("niveau", "")
-    serie   = profile.get("serie", "")
-    interets: list = profile.get("interets", [])
 
     if niveau or serie:
         ctx = f"Niveau scolaire : {niveau}" if niveau else ""

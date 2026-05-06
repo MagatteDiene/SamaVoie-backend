@@ -1,402 +1,213 @@
 ================================================================================
   KALI — HISTORIQUE CONVERSATIONNEL & PERSONNALISATION
   SamaVoie Backend — Documentation technique détaillée
-  Auteur : Claude Code | Date : 2026-05-05
+  Mise à jour : 2026-05-06 (schéma 100 % relationnel avec référentiels)
 ================================================================================
 
 
 ────────────────────────────────────────────────────────────────────────────────
-1. MODÈLE DE DONNÉES EN BASE (PostgreSQL)
+1. SCHÉMA COMPLET DE LA BASE DE DONNÉES
 ────────────────────────────────────────────────────────────────────────────────
 
-Deux tables sont impliquées. Aucune nouvelle table n'a été créée — tout
-s'appuie sur ce qui existait déjà.
+┌──────────────────────────────────────────────────────────────────────────┐
+│                         RÉFÉRENTIELS (lecture seule)                     │
+├─────────────────┬──────────────────────┬─────────────────────────────────┤
+│ niveaux         │ series               │ interets                        │
+├─────────────────┼──────────────────────┼─────────────────────────────────┤
+│ id PK           │ id PK                │ id PK                           │
+│ designation     │ designation          │ designation                     │
+│ description     │ description          │ description                     │
+└─────────────────┴──────────────────────┴─────────────────────────────────┘
 
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ users  (auth uniquement)                                                    │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ id  email  hashed_password  nom  prenom  is_active  is_admin               │
+└───────────────────────────┬─────────────────────────────────────────────────┘
+                            │ 1:1
+                            ▼
+┌──────────────────────────────────────────────────────────┐
+│ profiles                                                 │
+├──────────────────────────────────────────────────────────┤
+│ id PK                                                    │
+│ user_id   FK → users.id     UNIQUE  CASCADE DELETE       │
+│ ville     VARCHAR nullable                               │
+│ bio       TEXT    nullable                               │
+│ niveau_id FK → niveaux.id   nullable  SET NULL           │
+│ serie_id  FK → series.id    nullable  SET NULL           │
+└─────────────┬────────────────────────────────────────────┘
+              │ N:M via profile_interets
+              ▼
+┌──────────────────────────────────────────────────────────┐
+│ profile_interets (junction)                              │
+│ profile_id FK PK  |  interet_id FK PK                   │
+└──────────────────────────────────────────────────────────┘
 
-TABLE : users
-─────────────
-  id              INTEGER  PK
-  email           VARCHAR  UNIQUE
-  hashed_password VARCHAR
-  nom             VARCHAR
-  prenom          VARCHAR
-  is_active       BOOLEAN
-  profile         JSON     (nullable)   ← clé pour la personnalisation
-
-  Exemple de valeur dans la colonne "profile" :
-  {
-    "niveau":   "Terminale",
-    "serie":    "S",
-    "interets": ["informatique", "médecine", "entrepreneuriat"]
-  }
-
-  Ce champ est libre (JSON). On peut y mettre n'importe quelle info
-  utile pour Kali. Pour l'instant : niveau, série, intérêts.
-  Il peut être enrichi plus tard sans migration de schéma.
-
-
-TABLE : conversations
-─────────────────────
-  id          INTEGER  PK
-  user_id     INTEGER  FK → users.id  CASCADE DELETE
-  session_id  VARCHAR  INDEX          ← identifiant de session côté client
-  messages    JSON     NOT NULL       ← liste de tous les messages de la session
-  created_at  DATETIME
-  updated_at  DATETIME (auto-update)
-
-  Exemple de valeur dans la colonne "messages" (après 2 échanges) :
-  [
-    { "role": "user",      "content": "Quelles filières après un Bac S ?" },
-    { "role": "assistant", "content": "Après un Bac S, tu peux choisir..." },
-    { "role": "user",      "content": "Et les débouchés en informatique ?" },
-    { "role": "assistant", "content": "En informatique au Sénégal, les débouchés..." }
-  ]
-
-  IMPORTANT : On stocke les messages BRUTS.
-  - Le message "user" = la question originale de l'utilisateur (pas le prompt
-    augmenté avec les chunks RAG).
-  - Le message "assistant" = la réponse finale de Kali.
-  - Les chunks ChromaDB ne sont JAMAIS sauvegardés en base. Ils sont
-    recalculés à chaque requête.
+┌──────────────────────────────────────────────────────────┐
+│ conversations                                            │
+├──────────────────────────────────────────────────────────┤
+│ id  user_id FK  session_id  created_at  updated_at       │
+└──────────────────────────────────────────────────────────┘
+              │ 1:N
+              ▼
+┌──────────────────────────────────────────────────────────┐
+│ messages                                                 │
+├──────────────────────────────────────────────────────────┤
+│ id  conversation_id FK  role  content  created_at        │
+└──────────────────────────────────────────────────────────┘
 
 
 ────────────────────────────────────────────────────────────────────────────────
-2. CYCLE DE VIE D'UNE REQUÊTE /chat — PAS À PAS
+2. DONNÉES PRÉ-PEUPLÉES (système scolaire sénégalais)
 ────────────────────────────────────────────────────────────────────────────────
 
-Requête HTTP reçue :
-  POST /chat/
-  Body : { "message": "Et les débouchés en médecine ?", "session_id": "abc-123" }
-  Header : Authorization: Bearer <JWT>   ← optionnel
+NIVEAUX (12 entrées) :
+  3ème | Seconde | Première | Terminale
+  BTS/DUT | L1 | L2 | L3 | M1 | M2 | Doctorat | Autre
 
+SÉRIES BAC (13 entrées) :
+  S1 (Maths/Physique) | S2 (SVT) | S1A | S2A
+  L1 (Lettres fr) | L2 | L'1 (Lettres arabes)
+  G (Éco-Social) | T1 (Indus) | T2 (Éco-Tech) | STEG | F4 (Info) | Autre
 
-ÉTAPE 1 — DÉCODAGE DU TOKEN (optionnel)
-───────────────────────────────────────
-  Si le header Authorization est présent :
-    → Décode le JWT avec la clé secrète
-    → Extrait l'email depuis le payload ("sub")
-    → Charge l'objet User depuis PostgreSQL
-    → current_user = <User id=7, prenom="Mamadou", profile={...}>
-
-  Si pas de token (anonyme) :
-    → current_user = None
-    → Le chat fonctionne quand même, sans historique
-
-
-ÉTAPE 2 — CHARGEMENT DE LA CONVERSATION (si authentifié)
-──────────────────────────────────────────────────────────
-  Cas A — session_id fourni ("abc-123") :
-    SELECT * FROM conversations
-    WHERE session_id = 'abc-123' AND user_id = 7;
-
-    Si trouvé → conversation chargée avec tous ses messages
-    Si non trouvé (session_id invalide ou appartient à quelqu'un d'autre)
-              → nouvelle conversation créée avec session_id = "abc-123"
-
-  Cas B — pas de session_id :
-    → session_id = uuid4() généré (ex. "f47ac10b-58cc-...")
-    → nouvelle conversation créée avec ce nouvel identifiant
-
-  Dans tous les cas, si une nouvelle conversation est créée :
-    INSERT INTO conversations (user_id, session_id, messages)
-    VALUES (7, 'abc-123', '[]');
-    → db.flush() (l'objet existe en mémoire, pas encore commité)
-
-
-ÉTAPE 3 — EXTRACTION DE L'HISTORIQUE
-──────────────────────────────────────
-  history = conversation.messages[-10:]
-  (les 10 derniers éléments = 5 échanges user/assistant)
-
-  Si la conversation a 6 échanges (12 messages) en base :
-    history = messages[2:]  ← on garde seulement les 5 plus récents
-
-  Si la conversation est toute neuve :
-    history = []
-
-
-ÉTAPE 4 — CONSTRUCTION DU USER CONTEXT
-────────────────────────────────────────
-  user_context = {
-    "prenom":  "Mamadou",
-    "nom":     "Diallo",
-    "profile": { "niveau": "Terminale", "serie": "S", "interets": [...] }
-  }
-
-  Si anonyme → user_context = None
-
-
-ÉTAPE 5 — APPEL DU MOTEUR RAG (rag_engine.query)
-──────────────────────────────────────────────────
-
-  5a. EMBEDDING DE LA QUESTION
-      query_vector = BGE-M3.encode("Et les débouchés en médecine ?")
-      → vecteur de 1024 dimensions (float32)
-
-  5b. RECHERCHE CHROMADB
-      collection.query(query_embeddings=[query_vector], n_results=5)
-      → Retourne les 5 chunks les plus proches (cosine similarity)
-      → chunks = ["La médecine au Sénégal...", "Les débouchés pour...", ...]
-      → sources = ["guide_orientation_2024.pdf", "filieres_sante.pdf"]
-
-  5c. CONSTRUCTION DU SYSTEM PROMPT DYNAMIQUE
-      Si user_context présent :
-
-        "Tu es Kali, l'intelligence artificielle intégrée à la plateforme
-        SamaVoie, spécialisée en orientation académique et professionnelle
-        dans le système sénégalais.
-        Tu réponds en français, de façon claire et structurée, en t'appuyant
-        UNIQUEMENT sur les extraits de documents fournis.
-        Si l'information n'est pas dans les extraits, dis-le honnêtement
-        sans inventer.
-
-        Tu parles à Mamadou.
-        Niveau scolaire : Terminale, Série : S
-        Centres d'intérêt : informatique, médecine.
-        Adapte tes réponses à son profil."
-
-      Si anonyme :
-        → Seulement le bloc de base (sans le bloc profil)
-
-  5d. CONSTRUCTION DE LA LISTE DE MESSAGES POUR OLLAMA
-
-      messages = [
-        { "role": "system",    "content": "<system prompt ci-dessus>" },
-
-        // ← HISTORIQUE injecté ici (messages bruts)
-        { "role": "user",      "content": "Quelles filières après un Bac S ?" },
-        { "role": "assistant", "content": "Après un Bac S, tu peux choisir..." },
-        { "role": "user",      "content": "Et les débouchés en informatique ?" },
-        { "role": "assistant", "content": "En informatique au Sénégal..." },
-
-        // ← MESSAGE COURANT avec contexte RAG injecté
-        {
-          "role": "user",
-          "content": "Extraits de documents :\n
-                      [chunk 1 : La médecine au Sénégal...]\n\n---\n\n
-                      [chunk 2 : Les débouchés pour...]\n\n---\n\n
-                      [chunk 3 : ...]\n\n
-                      Question : Et les débouchés en médecine ?"
-        }
-      ]
-
-      REMARQUE CLEF : Le contexte RAG (chunks) est injecté UNIQUEMENT dans
-      le message courant. Les messages historiques restent bruts (sans chunks).
-      Pourquoi ? Parce que les chunks sont des données volumineuses et
-      différentes à chaque question. Les ajouter dans les messages historiques
-      doublerait la taille du prompt sans apport.
-
-  5e. ENVOI À OLLAMA
-      POST http://localhost:11434/api/chat
-      Body : { "model": "qwen2.5:3b", "messages": [...], "stream": false, ... }
-      → Ollama génère la réponse en tenant compte de tout le contexte
-
-
-ÉTAPE 6 — PERSISTANCE DE L'ÉCHANGE
-────────────────────────────────────
-  Si utilisateur authentifié :
-
-    conversation.messages = conversation.messages + [
-      { "role": "user",      "content": "Et les débouchés en médecine ?" },
-      { "role": "assistant", "content": "<réponse de Kali>" }
-    ]
-
-    await db.commit()
-    → UPDATE conversations SET messages = '[...nouveau JSON...]', updated_at = NOW()
-       WHERE id = <id_conversation>;
-
-  Si anonyme → rien n'est sauvegardé
-
-
-ÉTAPE 7 — RÉPONSE HTTP
-───────────────────────
-  {
-    "answer":     "<réponse de Kali>",
-    "sources":    ["guide_orientation_2024.pdf"],
-    "session_id": "abc-123"
-  }
-
-  Le client garde le session_id pour la prochaine requête.
+INTÉRÊTS (15 entrées) :
+  Informatique & Numérique | Médecine & Santé | Droit & Sciences Politiques
+  Commerce & Marketing | Économie & Finance | Ingénierie & BTP
+  Agriculture & Environnement | Arts & Communication | Sciences de l'Éducation
+  Langues & Lettres | Sciences Sociales | Mathématiques & Physique
+  Transport & Logistique | Hôtellerie & Tourisme | Architecture & Urbanisme
 
 
 ────────────────────────────────────────────────────────────────────────────────
-3. SCÉNARIOS COMPLETS
+3. ENDPOINTS DISPONIBLES
 ────────────────────────────────────────────────────────────────────────────────
 
+RÉFÉRENTIELS — lecture publique (aucun token requis)
+  GET /niveaux/           → List[NiveauRead]      (pour dropdown frontend)
+  GET /niveaux/{id}       → NiveauRead
+  GET /series/            → List[SerieRead]
+  GET /series/{id}        → SerieRead
+  GET /interets/          → List[InteretRead]     (trié par designation)
+  GET /interets/{id}      → InteretRead
 
-SCÉNARIO 1 — Utilisateur anonyme (sans JWT)
-────────────────────────────────────────────
-  → Pas d'accès PostgreSQL (ni lecture ni écriture)
-  → Pas d'historique (chaque question est indépendante)
-  → System prompt de base (Kali générique, sans profil)
-  → session_id généré côté serveur, retourné mais inutile (rien n'est persisté)
-  → Fonctionne comme avant l'implémentation de l'historique
+AUTH
+  POST /auth/register     → UserRead              (inscription)
+  POST /auth/login        → Token                 (connexion)
+  GET  /auth/me           → UserRead + profile imbriqué
 
-  Cas d'usage : visiteur non connecté qui teste le chat
-
-
-SCÉNARIO 2 — Première question d'un utilisateur connecté (pas de session_id)
-──────────────────────────────────────────────────────────────────────────────
-  → Token JWT valide → user_id = 7 chargé
-  → Pas de session_id dans la requête
-  → Nouveau session_id = "f47ac10b-..." généré
-  → Nouvelle ligne créée dans conversations (messages = [])
-  → history = [] → Ollama reçoit : [system, user(question+chunks)]
-  → Réponse générée
-  → conversations.messages = [{role:user,...}, {role:assistant,...}]
-  → session_id retourné dans la réponse
-
-  Le client DOIT stocker ce session_id pour maintenir le contexte.
-
-
-SCÉNARIO 3 — Suite d'une conversation (session_id fourni)
-──────────────────────────────────────────────────────────
-  → Token JWT valide → user_id = 7 chargé
-  → session_id = "f47ac10b-..." fourni
-  → SELECT FROM conversations WHERE session_id = ... AND user_id = 7
-  → Conversation trouvée avec 4 messages (2 échanges)
-  → history = les 4 messages (< 10 donc on prend tout)
-  → Ollama reçoit : [system, msg1, msg2, msg3, msg4, user(question+chunks)]
-  → Kali "se souvient" des échanges précédents et répond en contexte
-  → 2 nouveaux messages ajoutés → conversation.messages a maintenant 6 éléments
-  → db.commit()
-
-
-SCÉNARIO 4 — Conversation longue (plus de 5 échanges)
-───────────────────────────────────────────────────────
-  → Conversation avec 20 messages en base (10 échanges)
-  → history = messages[-10:]  ← seulement les 5 derniers échanges
-  → Kali ne se souvient que des 5 dernières paires question/réponse
-  → Mais TOUS les 20 messages restent en base (historique complet conservé)
-  → La fenêtre glissante évite de surcharger le contexte Ollama
-
-  Pourquoi 10 messages (5 échanges) ?
-  → qwen2.5:3b a un contexte limité (~32K tokens)
-  → 10 messages ≈ 500-1000 tokens d'historique
-  → + chunks RAG (~2000 tokens) + system prompt (~200 tokens)
-  → Total bien en dessous de la limite
-
-
-SCÉNARIO 5 — Utilisateur connecté sans profil renseigné
-────────────────────────────────────────────────────────
-  → current_user.profile = None (ou {})
-  → user_context = { "prenom": "Fatou", "nom": "Sow", "profile": {} }
-  → _build_system_prompt génère :
-
-    "[prompt de base]
-
-    Tu parles à Fatou.
-    Adapte tes réponses à son profil."
-
-  → Kali sait au moins à qui elle parle, même sans détails scolaires
-
-
-SCÉNARIO 6 — Utilisateur connecté avec profil complet
-───────────────────────────────────────────────────────
-  → current_user.profile = {
-      "niveau": "Licence 2",
-      "serie": "",
-      "interets": ["droit", "commerce international"]
+PROFIL — token requis
+  GET /profiles/me        → ProfileRead           (profil complet avec niveau/serie/interets)
+  PUT /profiles/me        → ProfileRead           (créer ou mettre à jour)
+    Body : {
+      "ville":       "Dakar",
+      "bio":         "Étudiant en Terminale S1...",
+      "niveau_id":   4,          ← id depuis GET /niveaux/
+      "serie_id":    1,          ← id depuis GET /series/
+      "interet_ids": [1, 2, 5]   ← ids depuis GET /interets/
     }
-  → System prompt généré :
 
-    "[prompt de base]
-
-    Tu parles à Moussa.
-    Niveau scolaire : Licence 2
-    Centres d'intérêt : droit, commerce international.
-    Adapte tes réponses à son profil."
-
-  → Kali adapte son registre (pas de "après le Bac", mais "dans ta filière actuelle")
-
-
-SCÉNARIO 7 — session_id fourni mais appartenant à un autre utilisateur
-────────────────────────────────────────────────────────────────────────
-  → SELECT WHERE session_id = "xyz" AND user_id = 7
-  → session "xyz" existe mais appartient à user_id = 12
-  → résultat : None (condition AND user_id filtre)
-  → Nouvelle conversation créée avec session_id = "xyz" pour user_id = 7
-  → Pas de fuite de données entre utilisateurs
+CHAT RAG
+  POST /chat/             → ChatResponse
+    Body : { "message": "...", "session_id": "..." }
+    Header : Authorization: Bearer <token>  (optionnel)
 
 
 ────────────────────────────────────────────────────────────────────────────────
-4. CE QUI EST STOCKÉ EN BASE — RÉCAPITULATIF
+4. CYCLE DE VIE D'UNE REQUÊTE POST /chat/
 ────────────────────────────────────────────────────────────────────────────────
 
-  STOCKÉ :
-  ✓ Question originale de l'utilisateur (texte brut)
-  ✓ Réponse de Kali (texte brut)
-  ✓ Profil utilisateur (niveau, série, intérêts) dans users.profile
+ÉTAPE 1 — Auth optionnelle
+  Token présent → SELECT users + selectinload(profile → niveau, serie, interets)
+  Pas de token  → current_user = None
 
-  NON STOCKÉ :
-  ✗ Les chunks ChromaDB récupérés pour chaque question
-  ✗ Les sources (noms de PDF) par échange — seulement retournées en réponse
-  ✗ Les scores de similarité
-  ✗ Le system prompt (reconstruit dynamiquement à chaque requête)
-  ✗ Les vecteurs d'embedding
+ÉTAPE 2 — Chargement/création de la conversation (si authentifié)
+  SELECT conversations + selectinload(messages) WHERE session_id AND user_id
+  Si non trouvé → INSERT conversation + flush (id généré, pas encore commité)
 
+ÉTAPE 3 — Fenêtre d'historique
+  history = [{"role": m.role, "content": m.content} for m in messages[-10:]]
+  (5 derniers échanges = 10 messages)
 
-────────────────────────────────────────────────────────────────────────────────
-5. COMMENT METTRE À JOUR LE PROFIL UTILISATEUR
-────────────────────────────────────────────────────────────────────────────────
+ÉTAPE 4 — Construction du user_context
+  {
+    prenom:   current_user.prenom,
+    nom:      current_user.nom,
+    niveau:   profile.niveau.designation  (ou "" si non renseigné),
+    serie:    profile.serie.designation   (ou ""),
+    interets: [i.designation for i in profile.interets],
+  }
 
-  Le champ users.profile est un JSON libre. Pour le renseigner, il faut
-  soit :
+ÉTAPE 5 — RAG
+  5a. BGE-M3 encode la question → vecteur 1024D
+  5b. ChromaDB top-k chunks
+  5c. _build_system_prompt(user_context) → prompt personnalisé avec profil
+  5d. Ollama : [system + historique + question+chunks] → réponse
 
-  A) Un endpoint dédié (ex. PATCH /auth/me/profile) — à implémenter.
-     Body : { "niveau": "Terminale", "serie": "S", "interets": ["info"] }
-     → UPDATE users SET profile = '...' WHERE id = current_user.id
+ÉTAPE 6 — Persistance (si authentifié)
+  INSERT messages x2 (user + assistant)
+  UPDATE conversations.updated_at
+  db.commit()  ← tout en une seule transaction
 
-  B) À l'inscription (POST /auth/register) en ajoutant profile dans le body.
-
-  C) Directement en base pour les tests :
-     UPDATE users
-     SET profile = '{"niveau":"Terminale","serie":"S","interets":["info"]}'
-     WHERE email = 'utilisateur@test.com';
-
-  Les clés reconnues par _build_system_prompt() :
-    - "niveau"   : str  — ex. "Terminale", "Licence 2", "Master 1"
-    - "serie"    : str  — ex. "S", "L", "STEG" (surtout utile au secondaire)
-    - "interets" : list[str] — ex. ["informatique", "médecine"]
-
-  Toute autre clé est ignorée silencieusement (pas d'erreur).
+ÉTAPE 7 → { answer, sources, session_id }
 
 
 ────────────────────────────────────────────────────────────────────────────────
-6. FLUX DE DONNÉES — SCHÉMA
+5. WORKFLOW FRONTEND RECOMMANDÉ
 ────────────────────────────────────────────────────────────────────────────────
 
-  Client
-    │
-    │  POST /chat/  { message, session_id? }  +  Bearer JWT (optionnel)
-    ▼
-  chat.py (FastAPI endpoint)
-    │
-    ├─► PostgreSQL : charger User (profil)
-    ├─► PostgreSQL : charger/créer Conversation (historique)
-    │
-    ▼
-  rag_engine.query()
-    │
-    ├─► BGE-M3 (GPU)  : encode question → vecteur 1024D
-    ├─► ChromaDB      : top-k chunks les plus proches
-    ├─► _build_system_prompt() : injecte profil utilisateur
-    │
-    ├─► Ollama qwen2.5:3b :
-    │     system_prompt
-    │     + historique (5 derniers échanges bruts)
-    │     + question actuelle + chunks RAG
-    │   → réponse de Kali
-    │
-    ▼
-  chat.py
-    │
-    ├─► PostgreSQL : appende {user, assistant} à conversations.messages
-    ├─► db.commit()
-    │
-    ▼
-  Client
-    { answer, sources, session_id }
+1. Au chargement de l'app (avant inscription) :
+   GET /niveaux/ → stocker en cache local (dropdown)
+   GET /series/  → stocker en cache local
+   GET /interets/→ stocker en cache local (checkboxes)
+
+2. Inscription :
+   POST /auth/register  { email, nom, prenom, password }
+   → Retourne UserRead sans profil (profile = null)
+
+3. Complétion du profil (onboarding) :
+   PUT /profiles/me  { niveau_id, serie_id, interet_ids, ville, bio }
+   → Retourne ProfileRead complet
+
+4. Affichage du profil :
+   GET /auth/me → UserRead avec profile imbriqué
+   (ou GET /profiles/me pour juste le profil)
+
+5. Chat :
+   POST /chat/  { message, session_id? }  + Bearer token
+   → Kali répond en connaissant le profil (niveau, série, intérêts)
+   → Stocker le session_id retourné pour la prochaine requête
+
+
+────────────────────────────────────────────────────────────────────────────────
+6. CE QUI EST STOCKÉ / NON STOCKÉ
+────────────────────────────────────────────────────────────────────────────────
+
+STOCKÉ EN BASE :
+  ✓ messages.role + content + created_at  (table dédiée, paginable)
+  ✓ profiles.ville + bio + niveau_id + serie_id
+  ✓ profile_interets (junction ids)
+  ✓ niveaux/series/interets (référentiels pré-peuplés)
+
+NON STOCKÉ :
+  ✗ Chunks ChromaDB (recalculés à chaque requête)
+  ✗ Vecteurs BGE-M3
+  ✗ System prompt (reconstruit dynamiquement)
+  ✗ Sources PDF par échange (retournées dans la réponse uniquement)
+
+
+────────────────────────────────────────────────────────────────────────────────
+7. MIGRATIONS ALEMBIC
+────────────────────────────────────────────────────────────────────────────────
+
+Chaîne de migrations :
+  3e1719684a0e  →  initial_schema
+  b2c4d6e8f0a1  →  structured_messages_and_user_profile
+  c3d5e7f9a0b2  →  referentiels_et_profil_structure  ← HEAD actuel
+
+Commandes :
+  alembic upgrade head          # appliquer toutes les migrations
+  alembic current               # voir la version actuelle
+  alembic downgrade -1          # reculer d'une migration
 
 
 ================================================================================

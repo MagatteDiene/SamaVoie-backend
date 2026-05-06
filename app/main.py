@@ -155,24 +155,30 @@ async def health_check():
 # ---------------------------------------------------------------------------
 # Routers — décommentés progressivement par phase
 # ---------------------------------------------------------------------------
-# Phase 3 — Auth
+# Auth
 from app.api.auth import router as auth_router
 app.include_router(auth_router, prefix="/auth", tags=["Authentication"])
 
-# Phase 5 — Chat RAG
+# Profil utilisateur
+from app.api.profiles import router as profiles_router
+app.include_router(profiles_router, prefix="/profiles", tags=["Profil"])
+
+# Référentiels (dropdowns frontend)
+from app.api.niveaux import router as niveaux_router
+from app.api.series import router as series_router
+from app.api.interets import router as interets_router
+app.include_router(niveaux_router, prefix="/niveaux", tags=["Référentiel — Niveaux"])
+app.include_router(series_router, prefix="/series", tags=["Référentiel — Séries"])
+app.include_router(interets_router, prefix="/interets", tags=["Référentiel — Intérêts"])
+
+# Chat RAG
 from app.api.chat import router as chat_router
 app.include_router(chat_router, prefix="/chat", tags=["Chat & RAG"])
 
-# Phase 4 — Référentiel CRUD
+# Référentiel CRUD (orientation)
 from app.api.filieres import router as filieres_router
 from app.api.metiers import router as metiers_router
 from app.api.etablissements import router as etablissements_router
 app.include_router(filieres_router, prefix="/filieres", tags=["Filières"])
 app.include_router(metiers_router, prefix="/metiers", tags=["Métiers"])
 app.include_router(etablissements_router, prefix="/etablissements", tags=["Établissements"])
-
-# Phase 5 — Historique & Admin
-# from app.api.history import router as history_router
-# from app.api.admin import router as admin_router
-# app.include_router(history_router, prefix="/history", tags=["Historique"])
-# app.include_router(admin_router, prefix="/admin", tags=["Administration"])
